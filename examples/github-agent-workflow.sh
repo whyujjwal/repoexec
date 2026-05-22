@@ -6,8 +6,34 @@ REPOEXEC_HOST="${REPOEXEC_HOST:-127.0.0.1:8765}"
 WORKSPACE="${WORKSPACE:-.}"
 POLICY="${POLICY:-examples/policy.json}"
 
-echo "==> Starting RepoExec (background)"
-python3 -m repoexec.cli serve --policy "$POLICY" --host 127.0.0.1 --port 8765 &
+if [ -x ".venv/bin/python" ]; then
+  PYTHON=".venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON="python3"
+else
+  echo "python3 is required." >&2
+  exit 1
+fi
+
+if [ -x ".venv/bin/repoexec" ]; then
+  REPOEXEC=".venv/bin/repoexec"
+elif command -v repoexec >/dev/null 2>&1; then
+  REPOEXEC="repoexec"
+else
+  echo "Install RepoExec first: python3 -m pip install -e '.[dev]'" >&2
+  exit 1
+fi
+
+if [ "$REPOEXEC_HOST" = "127.0.0.1:8765" ]; then
+  PORT="$("$PYTHON" -c "import socket; s=socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1]); s.close()")"
+  REPOEXEC_HOST="127.0.0.1:${PORT}"
+fi
+
+HOST="${REPOEXEC_HOST%:*}"
+PORT="${REPOEXEC_HOST##*:}"
+
+echo "==> Starting RepoExec (background) on ${REPOEXEC_HOST}"
+"$REPOEXEC" serve --policy "$POLICY" --host "$HOST" --port "$PORT" &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 sleep 1
