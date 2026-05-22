@@ -96,3 +96,57 @@ def test_list_runs_filters_by_decision(tmp_path: Path):
     denied = store.list_runs(decision="denied")
     assert len(denied) == 1
     assert denied[0].run_id == "run-denied"
+
+
+def test_list_runs_filters_by_command_contains(tmp_path: Path):
+    trace_path = tmp_path / "traces.jsonl"
+    store = TraceStore(trace_path)
+    store.append(
+        TraceRecord(
+            run_id="run-pytest",
+            timestamp=utc_now(),
+            workspace=".",
+            command="pytest -q",
+            decision=PolicyDecision.ALLOWED,
+        )
+    )
+    store.append(
+        TraceRecord(
+            run_id="run-echo",
+            timestamp=utc_now(),
+            workspace=".",
+            command="echo hello",
+            decision=PolicyDecision.ALLOWED,
+        )
+    )
+
+    matched = store.list_runs(command_contains="PyTest")
+    assert len(matched) == 1
+    assert matched[0].run_id == "run-pytest"
+
+
+def test_list_runs_filters_by_workspace_contains(tmp_path: Path):
+    trace_path = tmp_path / "traces.jsonl"
+    store = TraceStore(trace_path)
+    store.append(
+        TraceRecord(
+            run_id="run-a",
+            timestamp=utc_now(),
+            workspace="/tmp/project-a",
+            command="ls",
+            decision=PolicyDecision.ALLOWED,
+        )
+    )
+    store.append(
+        TraceRecord(
+            run_id="run-b",
+            timestamp=utc_now(),
+            workspace="/tmp/project-b",
+            command="ls",
+            decision=PolicyDecision.ALLOWED,
+        )
+    )
+
+    matched = store.list_runs(workspace_contains="project-b")
+    assert len(matched) == 1
+    assert matched[0].run_id == "run-b"

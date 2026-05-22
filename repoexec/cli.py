@@ -16,6 +16,7 @@ from repoexec.approval import ApprovalError, issue_approval_token, resolve_appro
 from repoexec.policy import evaluate_policy, load_policy
 from repoexec.service import RunExecutionError, execute_run, replay_run
 from repoexec.store import TraceStore
+from repoexec.trace_view import format_compact_detail, format_compact_list
 
 app = typer.Typer(help="RepoExec: policy-checked command execution with trace logging.")
 traces_app = typer.Typer(help="Inspect persisted run traces.")
@@ -218,10 +219,36 @@ def list_traces(
     trace: Path = typer.Option(DEFAULT_TRACE_PATH, help="Path to JSONL trace log."),
     limit: int = typer.Option(20, help="Maximum number of traces to return."),
     decision: str | None = typer.Option(None, help="Filter by decision value."),
+    command: str | None = typer.Option(
+        None,
+        help="Filter to commands containing this substring (case-insensitive).",
+    ),
+    workspace: str | None = typer.Option(
+        None,
+        help="Filter to workspaces containing this substring (case-insensitive).",
+    ),
+    format: str = typer.Option(
+        "json",
+        "--format",
+        help="Output format: json (default) or compact (fixed-width table).",
+    ),
 ) -> None:
     """List recent trace records from the JSONL log."""
+    if format not in {"json", "compact"}:
+        typer.echo(json.dumps({"error": "Format must be 'json' or 'compact'."}))
+        raise typer.Exit(code=1)
+
     store = TraceStore(trace)
-    records = store.list_runs(limit=limit, decision=decision)
+    records = store.list_runs(
+        limit=limit,
+        decision=decision,
+        command_contains=command,
+        workspace_contains=workspace,
+    )
+    if format == "compact":
+        typer.echo(format_compact_list(records))
+        return
+
     typer.echo(json.dumps([record.model_dump(mode="json") for record in records]))
 
 
@@ -229,13 +256,26 @@ def list_traces(
 def get_trace(
     run_id: str = typer.Option(..., help="Run ID to fetch."),
     trace: Path = typer.Option(DEFAULT_TRACE_PATH, help="Path to JSONL trace log."),
+    format: str = typer.Option(
+        "json",
+        "--format",
+        help="Output format: json (default) or compact (human-readable summary).",
+    ),
 ) -> None:
     """Fetch a single trace record by run ID."""
+    if format not in {"json", "compact"}:
+        typer.echo(json.dumps({"error": "Format must be 'json' or 'compact'."}))
+        raise typer.Exit(code=1)
+
     store = TraceStore(trace)
     record = store.get(run_id)
     if record is None:
         typer.echo(json.dumps({"error": "Run not found."}))
         raise typer.Exit(code=1)
+    if format == "compact":
+        typer.echo(format_compact_detail(record))
+        return
+
     typer.echo(json.dumps(record.model_dump(mode="json")))
 
 

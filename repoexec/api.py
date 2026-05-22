@@ -39,8 +39,15 @@ def create_app(
     def list_runs(
         limit: int | None = Query(default=50, ge=1, le=500),
         decision: str | None = Query(default=None),
+        command: str | None = Query(default=None, min_length=1),
+        workspace: str | None = Query(default=None, min_length=1),
     ) -> list[TraceRecord]:
-        return store.list_runs(limit=limit, decision=decision)
+        return store.list_runs(
+            limit=limit,
+            decision=decision,
+            command_contains=command,
+            workspace_contains=workspace,
+        )
 
     @app.post("/runs", response_model=RunResponse)
     def create_run(request: RunRequest) -> RunResponse:

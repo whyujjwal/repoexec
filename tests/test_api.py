@@ -133,6 +133,17 @@ def test_list_runs_filters_by_decision(client: TestClient):
     assert all(record["decision"] == "denied" for record in body)
 
 
+def test_list_runs_filters_by_command(client: TestClient):
+    client.post("/runs", json={"workspace": ".", "command": "echo alpha"})
+    client.post("/runs", json={"workspace": ".", "command": "echo beta"})
+
+    response = client.get("/runs?command=alpha")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) >= 1
+    assert all("alpha" in record["command"] for record in body)
+
+
 def test_replay_run_reexecutes_allowed_command(client: TestClient):
     create = client.post("/runs", json={"workspace": ".", "command": "echo replay-me"})
     assert create.status_code == 200

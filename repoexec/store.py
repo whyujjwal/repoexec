@@ -35,6 +35,8 @@ class TraceStore:
         *,
         limit: int | None = None,
         decision: str | None = None,
+        command_contains: str | None = None,
+        workspace_contains: str | None = None,
     ) -> list[TraceRecord]:
         records = sorted(
             self._index.values(),
@@ -43,6 +45,16 @@ class TraceStore:
         )
         if decision is not None:
             records = [record for record in records if record.decision.value == decision]
+        if command_contains is not None:
+            needle = command_contains.casefold()
+            records = [
+                record for record in records if needle in record.command.casefold()
+            ]
+        if workspace_contains is not None:
+            needle = workspace_contains.casefold()
+            records = [
+                record for record in records if needle in record.workspace.casefold()
+            ]
         if limit is not None:
             records = records[:limit]
         return records

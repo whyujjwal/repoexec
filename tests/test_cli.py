@@ -120,3 +120,92 @@ def test_approve_and_run_with_token(tmp_path: Path, monkeypatch):
     assert body["decision"] == "allowed"
     assert body["stdout"].strip() == "approved"
     assert "approved via token" in body["policy_reason"]
+
+
+def test_traces_list_compact_format(tmp_path: Path):
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps({"allow": ["echo *"], "deny": [], "require_approval": []}),
+        encoding="utf-8",
+    )
+    trace = tmp_path / "traces.jsonl"
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    runner.invoke(
+        app,
+        [
+            "run",
+            "--workspace",
+            str(workspace),
+            "--command",
+            "echo compact-list",
+            "--policy",
+            str(policy),
+            "--trace",
+            str(trace),
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "traces",
+            "list",
+            "--trace",
+            str(trace),
+            "--format",
+            "compact",
+            "--command",
+            "compact",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "RUN ID" in result.stdout
+    assert "compact-list" in result.stdout
+    assert "allowed" in result.stdout
+
+
+def test_traces_get_compact_format(tmp_path: Path):
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps({"allow": ["echo *"], "deny": [], "require_approval": []}),
+        encoding="utf-8",
+    )
+    trace = tmp_path / "traces.jsonl"
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    run = runner.invoke(
+        app,
+        [
+            "run",
+            "--workspace",
+            str(workspace),
+            "--command",
+            "echo compact-get",
+            "--policy",
+            str(policy),
+            "--trace",
+            str(trace),
+        ],
+    )
+    run_id = json.loads(run.stdout)["run_id"]
+
+    result = runner.invoke(
+        app,
+        [
+            "traces",
+            "get",
+            "--run-id",
+            run_id,
+            "--trace",
+            str(trace),
+            "--format",
+            "compact",
+        ],
+    )
+    assert result.exit_code == 0
+    assert f"Run ID:    {run_id}" in result.stdout
+    assert "echo compact-get" in result.stdout
+    assert "Stdout:" in result.stdout
