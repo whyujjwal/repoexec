@@ -59,3 +59,15 @@ def test_validate_workspace_rejects_missing_root(tmp_path: Path):
 def test_run_command_rejects_empty_command(tmp_path: Path):
     with pytest.raises(ValueError, match="empty"):
         run_command(tmp_path, "   ")
+
+
+def test_run_command_executes_via_explicit_shell(tmp_path: Path):
+    result = run_command(tmp_path, "echo hello")
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "hello"
+
+
+def test_run_command_supports_pipelines(tmp_path: Path):
+    result = run_command(tmp_path, "echo -n abc | wc -c")
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "3"

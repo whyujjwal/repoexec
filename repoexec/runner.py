@@ -1,9 +1,13 @@
+import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from repoexec.config import DEFAULT_TIMEOUT_SECONDS
+
+_BLOCKED_ENV_KEYS = frozenset({"LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "PYTHONPATH"})
+_BLOCKED_ENV_PREFIXES = ("LD_", "DYLD_")
 
 
 @dataclass
@@ -48,6 +52,19 @@ def validate_workspace(
     return workspace_path
 
 
+def _restricted_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key in _BLOCKED_ENV_KEYS:
+            continue
+        if key.startswith(_BLOCKED_ENV_PREFIXES):
+            continue
+        if key in ("BASH_ENV", "ENV"):
+            continue
+        env[key] = value
+    return env
+
+
 def run_command(
     workspace: Path | str,
     command: str,
@@ -62,9 +79,10 @@ def run_command(
 
     start = time.perf_counter()
     completed = subprocess.run(
-        command,
-        shell=True,
+        ["/bin/sh", "-c", command],
+        shell=False,
         cwd=workspace_path,
+        env=_restricted_env(),
         capture_output=True,
         text=True,
         timeout=timeout_seconds,
