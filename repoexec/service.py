@@ -25,6 +25,9 @@ def execute_run(
     timeout_seconds: int | None = None,
     replay_of: str | None = None,
 ) -> RunResponse:
+    if not command.strip():
+        raise RunExecutionError(400, "Command must not be empty.")
+
     run_metadata = dict(metadata or {})
     if replay_of is not None:
         run_metadata["replayed_from"] = replay_of

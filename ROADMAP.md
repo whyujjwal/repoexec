@@ -8,7 +8,7 @@
 - Typer CLI (`serve`, `run`, `replay`, `traces list/get`)
 - trace listing and replay support
 - workspace validation and empty-command guard
-- GitHub Actions CI
+- GitHub Actions CI workflow (`.github/workflows/ci.yml`, ready to push)
 - README with architecture and agent integration examples
 
 ## Next improvements

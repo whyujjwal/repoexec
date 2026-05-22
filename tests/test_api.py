@@ -157,3 +157,8 @@ def test_invalid_workspace_returns_400(client: TestClient, tmp_path: Path):
         json={"workspace": str(missing), "command": "echo hello"},
     )
     assert response.status_code == 400
+
+
+def test_empty_command_returns_400(client: TestClient):
+    response = client.post("/runs", json={"workspace": ".", "command": "   "})
+    assert response.status_code == 400
