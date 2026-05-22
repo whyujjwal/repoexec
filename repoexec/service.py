@@ -4,7 +4,7 @@ from typing import Any
 from repoexec.config import DEFAULT_TIMEOUT_SECONDS
 from repoexec.models import PolicyDecision, RunRequest, RunResponse, TraceRecord, utc_now
 from repoexec.policy import Policy, evaluate_policy
-from repoexec.runner import run_command
+from repoexec.runner import WorkspaceValidationError, run_command, validate_workspace
 from repoexec.store import TraceStore
 
 
@@ -24,9 +24,15 @@ def execute_run(
     metadata: dict[str, Any] | None = None,
     timeout_seconds: int | None = None,
     replay_of: str | None = None,
+    workspace_root: str | None = None,
 ) -> RunResponse:
     if not command.strip():
         raise RunExecutionError(400, "Command must not be empty.")
+
+    try:
+        validate_workspace(workspace, allowed_root=workspace_root)
+    except WorkspaceValidationError as exc:
+        raise RunExecutionError(400, str(exc)) from exc
 
     run_metadata = dict(metadata or {})
     if replay_of is not None:
@@ -82,8 +88,15 @@ def execute_run(
         )
 
     try:
-        result = run_command(workspace, command, timeout_seconds=effective_timeout)
+        result = run_command(
+            workspace,
+            command,
+            timeout_seconds=effective_timeout,
+            allowed_root=workspace_root,
+        )
     except ValueError as exc:
+        raise RunExecutionError(400, str(exc)) from exc
+    except WorkspaceValidationError as exc:
         raise RunExecutionError(400, str(exc)) from exc
     except subprocess.TimeoutExpired as exc:
         raise RunExecutionError(408, "Command timed out.") from exc
@@ -122,6 +135,8 @@ def execute_run_request(
     policy: Policy,
     store: TraceStore,
     request: RunRequest,
+    *,
+    workspace_root: str | None = None,
 ) -> RunResponse:
     return execute_run(
         policy,
@@ -130,6 +145,7 @@ def execute_run_request(
         command=request.command,
         metadata=request.metadata,
         timeout_seconds=request.timeout_seconds,
+        workspace_root=workspace_root,
     )
 
 
@@ -139,6 +155,7 @@ def replay_run(
     run_id: str,
     *,
     timeout_seconds: int | None = None,
+    workspace_root: str | None = None,
 ) -> RunResponse:
     original = store.get(run_id)
     if original is None:
@@ -152,4 +169,5 @@ def replay_run(
         metadata=original.metadata,
         timeout_seconds=timeout_seconds,
         replay_of=run_id,
+        workspace_root=workspace_root,
     )

@@ -13,10 +13,12 @@ def create_app(
     *,
     policy_path: Path | str = DEFAULT_POLICY_PATH,
     trace_path: Path | str = DEFAULT_TRACE_PATH,
+    workspace_root: Path | str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="RepoExec", version="0.1.0")
     policy = load_policy(policy_path)
     store = TraceStore(trace_path)
+    resolved_workspace_root = str(Path(workspace_root).resolve()) if workspace_root else None
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -36,7 +38,12 @@ def create_app(
     @app.post("/runs", response_model=RunResponse)
     def create_run(request: RunRequest) -> RunResponse:
         try:
-            return execute_run_request(policy, store, request)
+            return execute_run_request(
+                policy,
+                store,
+                request,
+                workspace_root=resolved_workspace_root,
+            )
         except RunExecutionError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
@@ -53,7 +60,13 @@ def create_app(
         timeout_seconds: int | None = Query(default=None, ge=1),
     ) -> RunResponse:
         try:
-            return replay_run(policy, store, run_id, timeout_seconds=timeout_seconds)
+            return replay_run(
+                policy,
+                store,
+                run_id,
+                timeout_seconds=timeout_seconds,
+                workspace_root=resolved_workspace_root,
+            )
         except RunExecutionError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 

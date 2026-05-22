@@ -30,6 +30,19 @@ def client(tmp_path: Path, policy_file: Path):
     return TestClient(app)
 
 
+@pytest.fixture
+def rooted_client(tmp_path: Path, policy_file: Path):
+    root = tmp_path / "repo-root"
+    root.mkdir()
+    trace_path = tmp_path / "traces.jsonl"
+    app = create_app(
+        policy_path=policy_file,
+        trace_path=trace_path,
+        workspace_root=root,
+    )
+    return TestClient(app), root
+
+
 def test_healthz(client: TestClient):
     response = client.get("/healthz")
     assert response.status_code == 200
@@ -162,3 +175,39 @@ def test_invalid_workspace_returns_400(client: TestClient, tmp_path: Path):
 def test_empty_command_returns_400(client: TestClient):
     response = client.post("/runs", json={"workspace": ".", "command": "   "})
     assert response.status_code == 400
+
+
+def test_workspace_outside_root_returns_400(rooted_client):
+    client, root = rooted_client
+    outside = root.parent / "outside"
+    outside.mkdir()
+    response = client.post(
+        "/runs",
+        json={"workspace": str(outside), "command": "echo hello"},
+    )
+    assert response.status_code == 400
+    assert "outside allowed root" in response.json()["detail"]
+
+
+def test_workspace_inside_root_executes(rooted_client):
+    client, root = rooted_client
+    workspace = root / "pkg"
+    workspace.mkdir()
+    response = client.post(
+        "/runs",
+        json={"workspace": str(workspace), "command": "echo rooted"},
+    )
+    assert response.status_code == 200
+    assert response.json()["stdout"].strip() == "rooted"
+
+
+def test_denied_command_outside_root_returns_400(rooted_client):
+    client, root = rooted_client
+    outside = root.parent / "outside-denied"
+    outside.mkdir()
+    response = client.post(
+        "/runs",
+        json={"workspace": str(outside), "command": "rm -rf /tmp/x"},
+    )
+    assert response.status_code == 400
+    assert "outside allowed root" in response.json()["detail"]

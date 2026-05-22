@@ -12,7 +12,7 @@ from repoexec.config import (
     DEFAULT_TRACE_PATH,
 )
 from repoexec.policy import evaluate_policy, load_policy
-from repoexec.service import execute_run, replay_run
+from repoexec.service import RunExecutionError, execute_run, replay_run
 from repoexec.store import TraceStore
 
 app = typer.Typer(help="RepoExec: policy-checked command execution with trace logging.")
@@ -26,11 +26,19 @@ def serve(
     port: int = typer.Option(DEFAULT_PORT, help="Port to bind."),
     policy: Path = typer.Option(DEFAULT_POLICY_PATH, help="Path to policy JSON file."),
     trace: Path = typer.Option(DEFAULT_TRACE_PATH, help="Path to JSONL trace log."),
+    workspace_root: Path | None = typer.Option(
+        None,
+        help="Require all workspaces to resolve inside this directory.",
+    ),
 ) -> None:
     """Start the RepoExec HTTP API server."""
     from repoexec.api import create_app
 
-    api_app = create_app(policy_path=policy, trace_path=trace)
+    api_app = create_app(
+        policy_path=policy,
+        trace_path=trace,
+        workspace_root=workspace_root,
+    )
     uvicorn.run(api_app, host=host, port=port)
 
 
@@ -44,17 +52,26 @@ def run(
         DEFAULT_TIMEOUT_SECONDS,
         help="Maximum seconds before the command is terminated.",
     ),
+    workspace_root: Path | None = typer.Option(
+        None,
+        help="Require the workspace to resolve inside this directory.",
+    ),
 ) -> None:
     """Evaluate policy locally, run if allowed, and persist a trace record."""
     policy_obj = load_policy(policy)
     store = TraceStore(trace)
-    response = execute_run(
-        policy_obj,
-        store,
-        workspace=str(workspace),
-        command=command,
-        timeout_seconds=timeout,
-    )
+    try:
+        response = execute_run(
+            policy_obj,
+            store,
+            workspace=str(workspace),
+            command=command,
+            timeout_seconds=timeout,
+            workspace_root=str(workspace_root) if workspace_root else None,
+        )
+    except RunExecutionError as exc:
+        typer.echo(json.dumps({"error": exc.detail}))
+        raise typer.Exit(code=1) from exc
     payload = response.model_dump(mode="json")
     if response.decision.value == "denied":
         payload["message"] = "denied"
@@ -87,16 +104,25 @@ def replay(
         DEFAULT_TIMEOUT_SECONDS,
         help="Maximum seconds before the command is terminated.",
     ),
+    workspace_root: Path | None = typer.Option(
+        None,
+        help="Require the stored workspace to resolve inside this directory.",
+    ),
 ) -> None:
     """Re-run a stored command after re-evaluating current policy."""
     policy_obj = load_policy(policy)
     store = TraceStore(trace)
-    response = replay_run(
-        policy_obj,
-        store,
-        run_id,
-        timeout_seconds=timeout,
-    )
+    try:
+        response = replay_run(
+            policy_obj,
+            store,
+            run_id,
+            timeout_seconds=timeout,
+            workspace_root=str(workspace_root) if workspace_root else None,
+        )
+    except RunExecutionError as exc:
+        typer.echo(json.dumps({"error": exc.detail}))
+        raise typer.Exit(code=1) from exc
     payload = response.model_dump(mode="json")
     if response.decision.value == "denied":
         payload["message"] = "denied"
