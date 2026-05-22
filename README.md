@@ -111,6 +111,14 @@ Health check.
 {"status": "ok"}
 ```
 
+### `GET /explain`
+
+Dry-run policy evaluation without executing or writing traces.
+
+```bash
+curl -s 'http://127.0.0.1:8765/explain?command=git%20push%20origin%20main'
+```
+
 ### `POST /runs`
 
 Submit an execution request.

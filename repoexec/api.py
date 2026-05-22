@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 from repoexec.config import DEFAULT_POLICY_PATH, DEFAULT_TRACE_PATH
 from repoexec.models import RunRequest, RunResponse, TraceRecord
-from repoexec.policy import load_policy
+from repoexec.policy import PolicyEvaluation, evaluate_policy, load_policy
 from repoexec.service import RunExecutionError, execute_run_request, replay_run
 from repoexec.store import TraceStore
 
@@ -21,6 +21,10 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/explain", response_model=PolicyEvaluation)
+    def explain_command(command: str = Query(..., min_length=1)) -> PolicyEvaluation:
+        return evaluate_policy(policy, command)
 
     @app.get("/runs", response_model=list[TraceRecord])
     def list_runs(

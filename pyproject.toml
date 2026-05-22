@@ -15,6 +15,11 @@ dependencies = [
     "pydantic>=2.6",
 ]
 
+[project.urls]
+Homepage = "https://github.com/whyujjwal/repoexec"
+Repository = "https://github.com/whyujjwal/repoexec"
+Issues = "https://github.com/whyujjwal/repoexec/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

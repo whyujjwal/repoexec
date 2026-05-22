@@ -140,3 +140,20 @@ def test_replay_run_reexecutes_allowed_command(client: TestClient):
 def test_replay_unknown_run_returns_404(client: TestClient):
     response = client.post("/runs/missing-run/replay")
     assert response.status_code == 404
+
+
+def test_explain_endpoint_returns_policy_evaluation(client: TestClient):
+    response = client.get("/explain", params={"command": "rm -rf /tmp/x"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision"] == "denied"
+    assert body["matched_rule"] == "rm *"
+
+
+def test_invalid_workspace_returns_400(client: TestClient, tmp_path: Path):
+    missing = tmp_path / "missing-workspace"
+    response = client.post(
+        "/runs",
+        json={"workspace": str(missing), "command": "echo hello"},
+    )
+    assert response.status_code == 400
