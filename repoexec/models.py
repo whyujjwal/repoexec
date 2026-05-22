@@ -17,6 +17,7 @@ class RunRequest(BaseModel):
     command: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int | None = None
+    approval_token: str | None = None
 
 
 class RunResponse(BaseModel):

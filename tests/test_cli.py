@@ -54,3 +54,69 @@ def test_run_rejects_workspace_outside_root(tmp_path: Path):
     assert result.exit_code == 1
     body = json.loads(result.stdout)
     assert "outside allowed root" in body["error"]
+
+
+def test_approve_and_run_with_token(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("REPOEXEC_APPROVAL_SECRET", "cli-test-secret")
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {"allow": ["echo *"], "deny": [], "require_approval": ["echo approve*"]}
+        ),
+        encoding="utf-8",
+    )
+    trace = tmp_path / "traces.jsonl"
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    approve = runner.invoke(
+        app,
+        [
+            "approve",
+            "--workspace",
+            str(workspace),
+            "--command",
+            "echo approved",
+        ],
+    )
+    assert approve.exit_code == 0
+    token = json.loads(approve.stdout)["approval_token"]
+
+    blocked = runner.invoke(
+        app,
+        [
+            "run",
+            "--workspace",
+            str(workspace),
+            "--command",
+            "echo approved",
+            "--policy",
+            str(policy),
+            "--trace",
+            str(trace),
+        ],
+    )
+    assert blocked.exit_code == 2
+    assert json.loads(blocked.stdout)["decision"] == "approval_required"
+
+    allowed = runner.invoke(
+        app,
+        [
+            "run",
+            "--workspace",
+            str(workspace),
+            "--command",
+            "echo approved",
+            "--policy",
+            str(policy),
+            "--trace",
+            str(trace),
+            "--approval-token",
+            token,
+        ],
+    )
+    assert allowed.exit_code == 0
+    body = json.loads(allowed.stdout)
+    assert body["decision"] == "allowed"
+    assert body["stdout"].strip() == "approved"
+    assert "approved via token" in body["policy_reason"]

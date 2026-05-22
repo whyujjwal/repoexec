@@ -1,6 +1,7 @@
 import subprocess
 from typing import Any
 
+from repoexec.approval import ApprovalError, verify_approval_token
 from repoexec.config import DEFAULT_TIMEOUT_SECONDS
 from repoexec.models import PolicyDecision, RunRequest, RunResponse, TraceRecord, utc_now
 from repoexec.policy import Policy, evaluate_policy
@@ -25,6 +26,8 @@ def execute_run(
     timeout_seconds: int | None = None,
     replay_of: str | None = None,
     workspace_root: str | None = None,
+    approval_token: str | None = None,
+    approval_secret: bytes | None = None,
 ) -> RunResponse:
     if not command.strip():
         raise RunExecutionError(400, "Command must not be empty.")
@@ -41,6 +44,9 @@ def execute_run(
     run_id = TraceRecord.new_id()
     evaluation = evaluate_policy(policy, command)
     decision = evaluation.decision
+    policy_reason = evaluation.reason
+    matched_rule = evaluation.matched_rule
+    rule_category = evaluation.rule_category
     effective_timeout = timeout_seconds or DEFAULT_TIMEOUT_SECONDS
 
     if decision is PolicyDecision.DENIED:
@@ -60,32 +66,55 @@ def execute_run(
             run_id=run_id,
             decision=decision,
             message="Command denied by policy.",
-            policy_reason=evaluation.reason,
-            matched_rule=evaluation.matched_rule,
-            rule_category=evaluation.rule_category,
+            policy_reason=policy_reason,
+            matched_rule=matched_rule,
+            rule_category=rule_category,
         )
 
     if decision is PolicyDecision.APPROVAL_REQUIRED:
-        record = TraceRecord(
-            run_id=run_id,
-            timestamp=utc_now(),
-            workspace=workspace,
-            command=command,
-            decision=decision,
-            policy_reason=evaluation.reason,
-            matched_rule=evaluation.matched_rule,
-            rule_category=evaluation.rule_category,
-            metadata=run_metadata,
+        approved = False
+        if approval_token and approval_secret:
+            try:
+                verify_approval_token(
+                    token=approval_token,
+                    workspace=workspace,
+                    command=command,
+                    secret=approval_secret,
+                )
+                approved = True
+            except ApprovalError:
+                approved = False
+
+        if not approved:
+            record = TraceRecord(
+                run_id=run_id,
+                timestamp=utc_now(),
+                workspace=workspace,
+                command=command,
+                decision=decision,
+                policy_reason=policy_reason,
+                matched_rule=matched_rule,
+                rule_category=rule_category,
+                metadata=run_metadata,
+            )
+            store.append(record)
+            return RunResponse(
+                run_id=run_id,
+                decision=decision,
+                message="Command requires approval before execution.",
+                policy_reason=policy_reason,
+                matched_rule=matched_rule,
+                rule_category=rule_category,
+            )
+
+        run_metadata["approved_via_token"] = True
+        decision = PolicyDecision.ALLOWED
+        policy_reason = (
+            f"Command approved via token after matching require_approval rule "
+            f"'{evaluation.matched_rule}'."
         )
-        store.append(record)
-        return RunResponse(
-            run_id=run_id,
-            decision=decision,
-            message="Command requires approval before execution.",
-            policy_reason=evaluation.reason,
-            matched_rule=evaluation.matched_rule,
-            rule_category=evaluation.rule_category,
-        )
+        matched_rule = evaluation.matched_rule
+        rule_category = evaluation.rule_category
 
     try:
         result = run_command(
@@ -107,9 +136,9 @@ def execute_run(
         workspace=workspace,
         command=command,
         decision=decision,
-        policy_reason=evaluation.reason,
-        matched_rule=evaluation.matched_rule,
-        rule_category=evaluation.rule_category,
+        policy_reason=policy_reason,
+        matched_rule=matched_rule,
+        rule_category=rule_category,
         exit_code=result.exit_code,
         duration_ms=result.duration_ms,
         stdout=result.stdout,
@@ -121,9 +150,9 @@ def execute_run(
         run_id=run_id,
         decision=decision,
         message="Command executed.",
-        policy_reason=evaluation.reason,
-        matched_rule=evaluation.matched_rule,
-        rule_category=evaluation.rule_category,
+        policy_reason=policy_reason,
+        matched_rule=matched_rule,
+        rule_category=rule_category,
         exit_code=result.exit_code,
         duration_ms=result.duration_ms,
         stdout=result.stdout,
@@ -137,6 +166,7 @@ def execute_run_request(
     request: RunRequest,
     *,
     workspace_root: str | None = None,
+    approval_secret: bytes | None = None,
 ) -> RunResponse:
     return execute_run(
         policy,
@@ -146,6 +176,8 @@ def execute_run_request(
         metadata=request.metadata,
         timeout_seconds=request.timeout_seconds,
         workspace_root=workspace_root,
+        approval_token=request.approval_token,
+        approval_secret=approval_secret,
     )
 
 
@@ -156,6 +188,8 @@ def replay_run(
     *,
     timeout_seconds: int | None = None,
     workspace_root: str | None = None,
+    approval_token: str | None = None,
+    approval_secret: bytes | None = None,
 ) -> RunResponse:
     original = store.get(run_id)
     if original is None:
@@ -170,4 +204,6 @@ def replay_run(
         timeout_seconds=timeout_seconds,
         replay_of=run_id,
         workspace_root=workspace_root,
+        approval_token=approval_token,
+        approval_secret=approval_secret,
     )

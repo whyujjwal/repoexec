@@ -5,12 +5,14 @@ import typer
 import uvicorn
 
 from repoexec.config import (
+    DEFAULT_APPROVAL_SECRET_PATH,
     DEFAULT_HOST,
     DEFAULT_POLICY_PATH,
     DEFAULT_PORT,
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_TRACE_PATH,
 )
+from repoexec.approval import ApprovalError, issue_approval_token, resolve_approval_secret
 from repoexec.policy import evaluate_policy, load_policy
 from repoexec.service import RunExecutionError, execute_run, replay_run
 from repoexec.store import TraceStore
@@ -30,6 +32,10 @@ def serve(
         None,
         help="Require all workspaces to resolve inside this directory.",
     ),
+    approval_secret: Path = typer.Option(
+        DEFAULT_APPROVAL_SECRET_PATH,
+        help="Path to the local HMAC secret file for approval tokens.",
+    ),
 ) -> None:
     """Start the RepoExec HTTP API server."""
     from repoexec.api import create_app
@@ -38,8 +44,45 @@ def serve(
         policy_path=policy,
         trace_path=trace,
         workspace_root=workspace_root,
+        approval_secret_path=approval_secret,
     )
     uvicorn.run(api_app, host=host, port=port)
+
+
+@app.command()
+def approve(
+    workspace: Path = typer.Option(..., help="Workspace the token authorizes."),
+    command: str = typer.Option(..., help="Exact command the token authorizes."),
+    secret_path: Path = typer.Option(
+        DEFAULT_APPROVAL_SECRET_PATH,
+        help="Path to the local HMAC secret file.",
+    ),
+    create_secret: bool = typer.Option(
+        False,
+        help="Create a local secret file if one does not exist.",
+    ),
+    ttl_seconds: int = typer.Option(
+        3600,
+        help="Token lifetime in seconds (0 for no expiry).",
+    ),
+) -> None:
+    """Issue a local HMAC approval token for a workspace/command pair."""
+    try:
+        secret = resolve_approval_secret(
+            secret_path=secret_path,
+            create_if_missing=create_secret,
+        )
+        token = issue_approval_token(
+            workspace=str(workspace),
+            command=command,
+            secret=secret,
+            ttl_seconds=ttl_seconds if ttl_seconds > 0 else None,
+        )
+    except ApprovalError as exc:
+        typer.echo(json.dumps({"error": str(exc)}))
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps({"approval_token": token}))
 
 
 @app.command()
@@ -56,10 +99,25 @@ def run(
         None,
         help="Require the workspace to resolve inside this directory.",
     ),
+    approval_token: str | None = typer.Option(
+        None,
+        help="HMAC approval token for require_approval commands.",
+    ),
+    approval_secret: Path = typer.Option(
+        DEFAULT_APPROVAL_SECRET_PATH,
+        help="Path to the local HMAC secret file.",
+    ),
 ) -> None:
     """Evaluate policy locally, run if allowed, and persist a trace record."""
     policy_obj = load_policy(policy)
     store = TraceStore(trace)
+    secret: bytes | None = None
+    if approval_token:
+        try:
+            secret = resolve_approval_secret(secret_path=approval_secret)
+        except ApprovalError as exc:
+            typer.echo(json.dumps({"error": str(exc)}))
+            raise typer.Exit(code=1) from exc
     try:
         response = execute_run(
             policy_obj,
@@ -68,6 +126,8 @@ def run(
             command=command,
             timeout_seconds=timeout,
             workspace_root=str(workspace_root) if workspace_root else None,
+            approval_token=approval_token,
+            approval_secret=secret,
         )
     except RunExecutionError as exc:
         typer.echo(json.dumps({"error": exc.detail}))
@@ -108,10 +168,25 @@ def replay(
         None,
         help="Require the stored workspace to resolve inside this directory.",
     ),
+    approval_token: str | None = typer.Option(
+        None,
+        help="HMAC approval token for require_approval commands.",
+    ),
+    approval_secret: Path = typer.Option(
+        DEFAULT_APPROVAL_SECRET_PATH,
+        help="Path to the local HMAC secret file.",
+    ),
 ) -> None:
     """Re-run a stored command after re-evaluating current policy."""
     policy_obj = load_policy(policy)
     store = TraceStore(trace)
+    secret: bytes | None = None
+    if approval_token:
+        try:
+            secret = resolve_approval_secret(secret_path=approval_secret)
+        except ApprovalError as exc:
+            typer.echo(json.dumps({"error": str(exc)}))
+            raise typer.Exit(code=1) from exc
     try:
         response = replay_run(
             policy_obj,
@@ -119,6 +194,8 @@ def replay(
             run_id,
             timeout_seconds=timeout,
             workspace_root=str(workspace_root) if workspace_root else None,
+            approval_token=approval_token,
+            approval_secret=secret,
         )
     except RunExecutionError as exc:
         typer.echo(json.dumps({"error": exc.detail}))

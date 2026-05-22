@@ -224,3 +224,68 @@ def test_compound_command_bypass_is_denied(client: TestClient):
     assert body["matched_rule"] == "rm *"
     assert body["exit_code"] is None
     assert "Compound command blocked" in body["policy_reason"]
+
+
+@pytest.fixture
+def approval_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("REPOEXEC_APPROVAL_SECRET", "test-api-secret")
+    policy_path = tmp_path / "approval-policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "allow": ["echo *"],
+                "deny": [],
+                "require_approval": ["echo approve*"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    trace_path = tmp_path / "traces.jsonl"
+    app = create_app(
+        policy_path=policy_path,
+        trace_path=trace_path,
+    )
+    return TestClient(app)
+
+
+def test_approval_token_allows_require_approval_command(approval_client: TestClient):
+    from repoexec.approval import issue_approval_token
+
+    token = issue_approval_token(
+        workspace=".",
+        command="echo approved",
+        secret=b"test-api-secret",
+        ttl_seconds=3600,
+    )
+    response = approval_client.post(
+        "/runs",
+        json={
+            "workspace": ".",
+            "command": "echo approved",
+            "approval_token": token,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision"] == "allowed"
+    assert body["exit_code"] == 0
+    assert body["stdout"].strip() == "approved"
+    assert "approved via token" in body["policy_reason"]
+
+    trace = approval_client.get(f"/runs/{body['run_id']}")
+    assert trace.json()["metadata"]["approved_via_token"] is True
+
+
+def test_invalid_approval_token_still_blocks(approval_client: TestClient):
+    response = approval_client.post(
+        "/runs",
+        json={
+            "workspace": ".",
+            "command": "echo approved",
+            "approval_token": "not-a-valid-token",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision"] == "approval_required"
+    assert body["exit_code"] is None
