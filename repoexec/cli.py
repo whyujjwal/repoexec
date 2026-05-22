@@ -11,7 +11,7 @@ from repoexec.config import (
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_TRACE_PATH,
 )
-from repoexec.policy import load_policy
+from repoexec.policy import evaluate_policy, load_policy
 from repoexec.service import execute_run, replay_run
 from repoexec.store import TraceStore
 
@@ -66,6 +66,16 @@ def run(
         raise typer.Exit(code=2)
 
     typer.echo(json.dumps(payload))
+
+
+@app.command()
+def explain(
+    command: str = typer.Option(..., help="Shell command to evaluate against policy."),
+    policy: Path = typer.Option(DEFAULT_POLICY_PATH, help="Path to policy JSON file."),
+) -> None:
+    """Evaluate a command against policy without executing or writing traces."""
+    evaluation = evaluate_policy(load_policy(policy), command)
+    typer.echo(json.dumps(evaluation.model_dump(mode="json")))
 
 
 @app.command()

@@ -1,26 +1,26 @@
 # RepoExec Roadmap
 
-## Current MVP
-- policy engine for allow/deny/approval-required
-- local shell execution in a workspace
-- JSONL trace persistence
-- FastAPI API
-- Typer CLI
-- basic tests
+## Shipped in MVP+
+- policy engine for allow/deny/approval-required with explanation output
+- local shell execution in a workspace with timeout support
+- JSONL trace persistence with in-memory index
+- FastAPI API (`/healthz`, `/runs`, `/runs/{id}`, `/runs/{id}/replay`)
+- Typer CLI (`serve`, `run`, `replay`, `traces list/get`)
+- trace listing and replay support
+- workspace validation and empty-command guard
+- GitHub Actions CI
+- README with architecture and agent integration examples
 
 ## Next improvements
-1. Add explicit timeout and trace path overrides to API and CLI.
-2. Add replay support for stored runs.
-3. Add safer command execution constraints and workspace validation.
-4. Improve README with architecture, screenshots/examples, and positioning.
-5. Add structured trace listing endpoint and CLI command.
-6. Add policy explanation output: why a command was denied or required approval.
-7. Add GitHub-oriented examples for coding-agent workflows.
-8. Add CI via GitHub Actions.
+1. Add approval tokens / signed approvals for `require_approval` commands.
+2. Add configurable workspace root constraints (prevent path escape).
+3. Add richer trace viewer UI or TUI.
+4. Add GitHub App / webhook integration for repo-scoped execution.
+5. Add pluggable policy backends (OPA, remote config).
+6. Add streaming stdout/stderr for long-running commands.
 
 ## Stretch ideas
-- approval tokens / signed approvals
-- GitHub App integration
 - browser execution layer
-- pluggable policy backends
-- richer trace viewer UI
+- multi-tenant auth and RBAC
+- remote worker pool
+- MCP server wrapper for RepoExec
