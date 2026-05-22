@@ -1,0 +1,18 @@
+{
+  "allow": [
+    "echo *",
+    "pytest*",
+    "python*",
+    "ls*",
+    "git status*"
+  ],
+  "deny": [
+    "rm *",
+    "sudo*",
+    "curl * | sh"
+  ],
+  "require_approval": [
+    "git push*",
+    "npm publish*"
+  ]
+}
