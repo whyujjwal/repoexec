@@ -16,12 +16,16 @@ class RunRequest(BaseModel):
     workspace: str
     command: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: int | None = None
 
 
 class RunResponse(BaseModel):
     run_id: str
     decision: PolicyDecision
     message: str
+    policy_reason: str | None = None
+    matched_rule: str | None = None
+    rule_category: str | None = None
     exit_code: int | None = None
     duration_ms: int | None = None
     stdout: str | None = None
@@ -34,6 +38,9 @@ class TraceRecord(BaseModel):
     workspace: str
     command: str
     decision: PolicyDecision
+    policy_reason: str | None = None
+    matched_rule: str | None = None
+    rule_category: str | None = None
     exit_code: int | None = None
     duration_ms: int | None = None
     stdout: str | None = None

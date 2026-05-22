@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 
-from repoexec.config import DEFAULT_POLICY_PATH, DEFAULT_TRACE_PATH
+from repoexec.config import DEFAULT_POLICY_PATH, DEFAULT_TIMEOUT_SECONDS, DEFAULT_TRACE_PATH
 from repoexec.models import (
     PolicyDecision,
     RunRequest,
@@ -32,7 +32,9 @@ def create_app(
     @app.post("/runs", response_model=RunResponse)
     def create_run(request: RunRequest) -> RunResponse:
         run_id = TraceRecord.new_id()
-        decision = evaluate_policy(policy, request.command)
+        evaluation = evaluate_policy(policy, request.command)
+        decision = evaluation.decision
+        timeout_seconds = request.timeout_seconds or DEFAULT_TIMEOUT_SECONDS
 
         if decision is PolicyDecision.DENIED:
             record = TraceRecord(
@@ -41,6 +43,9 @@ def create_app(
                 workspace=request.workspace,
                 command=request.command,
                 decision=decision,
+                policy_reason=evaluation.reason,
+                matched_rule=evaluation.matched_rule,
+                rule_category=evaluation.rule_category,
                 metadata=request.metadata,
             )
             store.append(record)
@@ -48,6 +53,9 @@ def create_app(
                 run_id=run_id,
                 decision=decision,
                 message="Command denied by policy.",
+                policy_reason=evaluation.reason,
+                matched_rule=evaluation.matched_rule,
+                rule_category=evaluation.rule_category,
             )
 
         if decision is PolicyDecision.APPROVAL_REQUIRED:
@@ -57,6 +65,9 @@ def create_app(
                 workspace=request.workspace,
                 command=request.command,
                 decision=decision,
+                policy_reason=evaluation.reason,
+                matched_rule=evaluation.matched_rule,
+                rule_category=evaluation.rule_category,
                 metadata=request.metadata,
             )
             store.append(record)
@@ -64,10 +75,17 @@ def create_app(
                 run_id=run_id,
                 decision=decision,
                 message="Command requires approval before execution.",
+                policy_reason=evaluation.reason,
+                matched_rule=evaluation.matched_rule,
+                rule_category=evaluation.rule_category,
             )
 
         try:
-            result = run_command(request.workspace, request.command)
+            result = run_command(
+                request.workspace,
+                request.command,
+                timeout_seconds=timeout_seconds,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except subprocess.TimeoutExpired as exc:
@@ -79,6 +97,9 @@ def create_app(
             workspace=request.workspace,
             command=request.command,
             decision=decision,
+            policy_reason=evaluation.reason,
+            matched_rule=evaluation.matched_rule,
+            rule_category=evaluation.rule_category,
             exit_code=result.exit_code,
             duration_ms=result.duration_ms,
             stdout=result.stdout,
@@ -90,6 +111,9 @@ def create_app(
             run_id=run_id,
             decision=decision,
             message="Command executed.",
+            policy_reason=evaluation.reason,
+            matched_rule=evaluation.matched_rule,
+            rule_category=evaluation.rule_category,
             exit_code=result.exit_code,
             duration_ms=result.duration_ms,
             stdout=result.stdout,

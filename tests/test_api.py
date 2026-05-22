@@ -59,6 +59,9 @@ def test_denied_run_returns_structured_response(client: TestClient):
     body = response.json()
     assert body["decision"] == "denied"
     assert body["exit_code"] is None
+    assert body["matched_rule"] == "rm *"
+    assert body["rule_category"] == "deny"
+    assert "deny rule" in body["policy_reason"]
 
 
 def test_approval_required_run_is_blocked(client: TestClient):
@@ -70,8 +73,23 @@ def test_approval_required_run_is_blocked(client: TestClient):
     body = response.json()
     assert body["decision"] == "approval_required"
     assert body["exit_code"] is None
+    assert body["matched_rule"] == "git push*"
+    assert "require_approval" in body["policy_reason"]
 
 
 def test_get_unknown_run_returns_404(client: TestClient):
     response = client.get("/runs/does-not-exist")
     assert response.status_code == 404
+
+
+def test_timeout_override(client: TestClient):
+    response = client.post(
+        "/runs",
+        json={
+            "workspace": ".",
+            "command": "echo fast",
+            "timeout_seconds": 60,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["stdout"].strip() == "fast"

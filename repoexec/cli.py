@@ -4,7 +4,13 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from repoexec.config import DEFAULT_HOST, DEFAULT_POLICY_PATH, DEFAULT_PORT, DEFAULT_TRACE_PATH
+from repoexec.config import (
+    DEFAULT_HOST,
+    DEFAULT_POLICY_PATH,
+    DEFAULT_PORT,
+    DEFAULT_TIMEOUT_SECONDS,
+    DEFAULT_TRACE_PATH,
+)
 from repoexec.models import PolicyDecision, TraceRecord, utc_now
 from repoexec.policy import evaluate_policy, load_policy
 from repoexec.runner import run_command
@@ -33,12 +39,17 @@ def run(
     command: str = typer.Option(..., help="Shell command to evaluate and optionally run."),
     policy: Path = typer.Option(DEFAULT_POLICY_PATH, help="Path to policy JSON file."),
     trace: Path = typer.Option(DEFAULT_TRACE_PATH, help="Path to JSONL trace log."),
+    timeout: int = typer.Option(
+        DEFAULT_TIMEOUT_SECONDS,
+        help="Maximum seconds before the command is terminated.",
+    ),
 ) -> None:
     """Evaluate policy locally, run if allowed, and persist a trace record."""
     policy_obj = load_policy(policy)
     store = TraceStore(trace)
     run_id = TraceRecord.new_id()
-    decision = evaluate_policy(policy_obj, command)
+    evaluation = evaluate_policy(policy_obj, command)
+    decision = evaluation.decision
 
     if decision is PolicyDecision.DENIED:
         record = TraceRecord(
@@ -47,9 +58,22 @@ def run(
             workspace=str(workspace),
             command=command,
             decision=decision,
+            policy_reason=evaluation.reason,
+            matched_rule=evaluation.matched_rule,
+            rule_category=evaluation.rule_category,
         )
         store.append(record)
-        typer.echo(json.dumps({"run_id": run_id, "decision": decision.value, "message": "denied"}))
+        typer.echo(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "decision": decision.value,
+                    "message": "denied",
+                    "policy_reason": evaluation.reason,
+                    "matched_rule": evaluation.matched_rule,
+                }
+            )
+        )
         raise typer.Exit(code=1)
 
     if decision is PolicyDecision.APPROVAL_REQUIRED:
@@ -59,6 +83,9 @@ def run(
             workspace=str(workspace),
             command=command,
             decision=decision,
+            policy_reason=evaluation.reason,
+            matched_rule=evaluation.matched_rule,
+            rule_category=evaluation.rule_category,
         )
         store.append(record)
         typer.echo(
@@ -67,18 +94,23 @@ def run(
                     "run_id": run_id,
                     "decision": decision.value,
                     "message": "approval_required",
+                    "policy_reason": evaluation.reason,
+                    "matched_rule": evaluation.matched_rule,
                 }
             )
         )
         raise typer.Exit(code=2)
 
-    result = run_command(workspace, command)
+    result = run_command(workspace, command, timeout_seconds=timeout)
     record = TraceRecord(
         run_id=run_id,
         timestamp=utc_now(),
         workspace=str(workspace),
         command=command,
         decision=decision,
+        policy_reason=evaluation.reason,
+        matched_rule=evaluation.matched_rule,
+        rule_category=evaluation.rule_category,
         exit_code=result.exit_code,
         duration_ms=result.duration_ms,
         stdout=result.stdout,
@@ -90,6 +122,8 @@ def run(
             {
                 "run_id": run_id,
                 "decision": decision.value,
+                "policy_reason": evaluation.reason,
+                "matched_rule": evaluation.matched_rule,
                 "exit_code": result.exit_code,
                 "stdout": result.stdout,
                 "stderr": result.stderr,

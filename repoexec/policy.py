@@ -13,6 +13,13 @@ class Policy(BaseModel):
     require_approval: list[str] = Field(default_factory=list)
 
 
+class PolicyEvaluation(BaseModel):
+    decision: PolicyDecision
+    reason: str
+    matched_rule: str | None = None
+    rule_category: str | None = None
+
+
 def load_policy(path: Path | str) -> Policy:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return Policy.model_validate(data)
@@ -24,17 +31,36 @@ def _matches(command: str, pattern: str) -> bool:
     return pattern in command
 
 
-def evaluate_policy(policy: Policy, command: str) -> PolicyDecision:
+def evaluate_policy(policy: Policy, command: str) -> PolicyEvaluation:
     for pattern in policy.deny:
         if _matches(command, pattern):
-            return PolicyDecision.DENIED
+            return PolicyEvaluation(
+                decision=PolicyDecision.DENIED,
+                reason=f"Command matched deny rule '{pattern}'.",
+                matched_rule=pattern,
+                rule_category="deny",
+            )
 
     for pattern in policy.require_approval:
         if _matches(command, pattern):
-            return PolicyDecision.APPROVAL_REQUIRED
+            return PolicyEvaluation(
+                decision=PolicyDecision.APPROVAL_REQUIRED,
+                reason=f"Command matched require_approval rule '{pattern}'.",
+                matched_rule=pattern,
+                rule_category="require_approval",
+            )
 
     for pattern in policy.allow:
         if _matches(command, pattern):
-            return PolicyDecision.ALLOWED
+            return PolicyEvaluation(
+                decision=PolicyDecision.ALLOWED,
+                reason=f"Command matched allow rule '{pattern}'.",
+                matched_rule=pattern,
+                rule_category="allow",
+            )
 
-    return PolicyDecision.DENIED
+    return PolicyEvaluation(
+        decision=PolicyDecision.DENIED,
+        reason="Command did not match any allow rule.",
+        rule_category="default",
+    )
