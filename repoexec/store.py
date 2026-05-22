@@ -29,3 +29,20 @@ class TraceStore:
 
     def get(self, run_id: str) -> TraceRecord | None:
         return self._index.get(run_id)
+
+    def list_runs(
+        self,
+        *,
+        limit: int | None = None,
+        decision: str | None = None,
+    ) -> list[TraceRecord]:
+        records = sorted(
+            self._index.values(),
+            key=lambda record: record.timestamp,
+            reverse=True,
+        )
+        if decision is not None:
+            records = [record for record in records if record.decision.value == decision]
+        if limit is not None:
+            records = records[:limit]
+        return records

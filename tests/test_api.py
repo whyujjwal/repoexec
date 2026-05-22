@@ -93,3 +93,50 @@ def test_timeout_override(client: TestClient):
     )
     assert response.status_code == 200
     assert response.json()["stdout"].strip() == "fast"
+
+
+def test_list_runs_returns_recent_records(client: TestClient):
+    first = client.post("/runs", json={"workspace": ".", "command": "echo one"})
+    second = client.post("/runs", json={"workspace": ".", "command": "echo two"})
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    response = client.get("/runs?limit=10")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) >= 2
+    assert body[0]["command"] == "echo two"
+    assert body[1]["command"] == "echo one"
+
+
+def test_list_runs_filters_by_decision(client: TestClient):
+    client.post("/runs", json={"workspace": ".", "command": "echo ok"})
+    client.post("/runs", json={"workspace": ".", "command": "rm -rf /tmp/x"})
+
+    response = client.get("/runs?decision=denied")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) >= 1
+    assert all(record["decision"] == "denied" for record in body)
+
+
+def test_replay_run_reexecutes_allowed_command(client: TestClient):
+    create = client.post("/runs", json={"workspace": ".", "command": "echo replay-me"})
+    assert create.status_code == 200
+    run_id = create.json()["run_id"]
+
+    replay = client.post(f"/runs/{run_id}/replay")
+    assert replay.status_code == 200
+    body = replay.json()
+    assert body["decision"] == "allowed"
+    assert "replay-me" in body["stdout"]
+    assert body["run_id"] != run_id
+
+    trace = client.get(f"/runs/{body['run_id']}")
+    assert trace.status_code == 200
+    assert trace.json()["metadata"]["replayed_from"] == run_id
+
+
+def test_replay_unknown_run_returns_404(client: TestClient):
+    response = client.post("/runs/missing-run/replay")
+    assert response.status_code == 404

@@ -11,12 +11,13 @@ from repoexec.config import (
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_TRACE_PATH,
 )
-from repoexec.models import PolicyDecision, TraceRecord, utc_now
-from repoexec.policy import evaluate_policy, load_policy
-from repoexec.runner import run_command
+from repoexec.policy import load_policy
+from repoexec.service import execute_run, replay_run
 from repoexec.store import TraceStore
 
 app = typer.Typer(help="RepoExec: policy-checked command execution with trace logging.")
+traces_app = typer.Typer(help="Inspect persisted run traces.")
+app.add_typer(traces_app, name="traces")
 
 
 @app.command()
@@ -47,90 +48,82 @@ def run(
     """Evaluate policy locally, run if allowed, and persist a trace record."""
     policy_obj = load_policy(policy)
     store = TraceStore(trace)
-    run_id = TraceRecord.new_id()
-    evaluation = evaluate_policy(policy_obj, command)
-    decision = evaluation.decision
-
-    if decision is PolicyDecision.DENIED:
-        record = TraceRecord(
-            run_id=run_id,
-            timestamp=utc_now(),
-            workspace=str(workspace),
-            command=command,
-            decision=decision,
-            policy_reason=evaluation.reason,
-            matched_rule=evaluation.matched_rule,
-            rule_category=evaluation.rule_category,
-        )
-        store.append(record)
-        typer.echo(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "decision": decision.value,
-                    "message": "denied",
-                    "policy_reason": evaluation.reason,
-                    "matched_rule": evaluation.matched_rule,
-                }
-            )
-        )
-        raise typer.Exit(code=1)
-
-    if decision is PolicyDecision.APPROVAL_REQUIRED:
-        record = TraceRecord(
-            run_id=run_id,
-            timestamp=utc_now(),
-            workspace=str(workspace),
-            command=command,
-            decision=decision,
-            policy_reason=evaluation.reason,
-            matched_rule=evaluation.matched_rule,
-            rule_category=evaluation.rule_category,
-        )
-        store.append(record)
-        typer.echo(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "decision": decision.value,
-                    "message": "approval_required",
-                    "policy_reason": evaluation.reason,
-                    "matched_rule": evaluation.matched_rule,
-                }
-            )
-        )
-        raise typer.Exit(code=2)
-
-    result = run_command(workspace, command, timeout_seconds=timeout)
-    record = TraceRecord(
-        run_id=run_id,
-        timestamp=utc_now(),
+    response = execute_run(
+        policy_obj,
+        store,
         workspace=str(workspace),
         command=command,
-        decision=decision,
-        policy_reason=evaluation.reason,
-        matched_rule=evaluation.matched_rule,
-        rule_category=evaluation.rule_category,
-        exit_code=result.exit_code,
-        duration_ms=result.duration_ms,
-        stdout=result.stdout,
-        stderr=result.stderr,
+        timeout_seconds=timeout,
     )
-    store.append(record)
-    typer.echo(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "decision": decision.value,
-                "policy_reason": evaluation.reason,
-                "matched_rule": evaluation.matched_rule,
-                "exit_code": result.exit_code,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "duration_ms": result.duration_ms,
-            }
-        )
+    payload = response.model_dump(mode="json")
+    if response.decision.value == "denied":
+        payload["message"] = "denied"
+        typer.echo(json.dumps(payload))
+        raise typer.Exit(code=1)
+    if response.decision.value == "approval_required":
+        payload["message"] = "approval_required"
+        typer.echo(json.dumps(payload))
+        raise typer.Exit(code=2)
+
+    typer.echo(json.dumps(payload))
+
+
+@app.command()
+def replay(
+    run_id: str = typer.Option(..., help="Run ID to replay from the trace log."),
+    policy: Path = typer.Option(DEFAULT_POLICY_PATH, help="Path to policy JSON file."),
+    trace: Path = typer.Option(DEFAULT_TRACE_PATH, help="Path to JSONL trace log."),
+    timeout: int = typer.Option(
+        DEFAULT_TIMEOUT_SECONDS,
+        help="Maximum seconds before the command is terminated.",
+    ),
+) -> None:
+    """Re-run a stored command after re-evaluating current policy."""
+    policy_obj = load_policy(policy)
+    store = TraceStore(trace)
+    response = replay_run(
+        policy_obj,
+        store,
+        run_id,
+        timeout_seconds=timeout,
     )
+    payload = response.model_dump(mode="json")
+    if response.decision.value == "denied":
+        payload["message"] = "denied"
+        typer.echo(json.dumps(payload))
+        raise typer.Exit(code=1)
+    if response.decision.value == "approval_required":
+        payload["message"] = "approval_required"
+        typer.echo(json.dumps(payload))
+        raise typer.Exit(code=2)
+
+    typer.echo(json.dumps(payload))
+
+
+@traces_app.command("list")
+def list_traces(
+    trace: Path = typer.Option(DEFAULT_TRACE_PATH, help="Path to JSONL trace log."),
+    limit: int = typer.Option(20, help="Maximum number of traces to return."),
+    decision: str | None = typer.Option(None, help="Filter by decision value."),
+) -> None:
+    """List recent trace records from the JSONL log."""
+    store = TraceStore(trace)
+    records = store.list_runs(limit=limit, decision=decision)
+    typer.echo(json.dumps([record.model_dump(mode="json") for record in records]))
+
+
+@traces_app.command("get")
+def get_trace(
+    run_id: str = typer.Option(..., help="Run ID to fetch."),
+    trace: Path = typer.Option(DEFAULT_TRACE_PATH, help="Path to JSONL trace log."),
+) -> None:
+    """Fetch a single trace record by run ID."""
+    store = TraceStore(trace)
+    record = store.get(run_id)
+    if record is None:
+        typer.echo(json.dumps({"error": "Run not found."}))
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps(record.model_dump(mode="json")))
 
 
 def main() -> None:

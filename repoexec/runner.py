@@ -14,15 +14,29 @@ class CommandResult:
     duration_ms: int
 
 
+class WorkspaceValidationError(ValueError):
+    pass
+
+
+def validate_workspace(workspace: Path | str) -> Path:
+    workspace_path = Path(workspace).expanduser().resolve()
+    if not workspace_path.exists():
+        raise WorkspaceValidationError(f"Workspace does not exist: {workspace_path}")
+    if not workspace_path.is_dir():
+        raise WorkspaceValidationError(f"Workspace is not a directory: {workspace_path}")
+    return workspace_path
+
+
 def run_command(
     workspace: Path | str,
     command: str,
     *,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> CommandResult:
-    workspace_path = Path(workspace).resolve()
-    if not workspace_path.is_dir():
-        raise ValueError(f"Workspace does not exist or is not a directory: {workspace_path}")
+    if not command.strip():
+        raise ValueError("Command must not be empty.")
+
+    workspace_path = validate_workspace(workspace)
 
     start = time.perf_counter()
     completed = subprocess.run(

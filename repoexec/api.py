@@ -1,18 +1,11 @@
-import subprocess
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
-from repoexec.config import DEFAULT_POLICY_PATH, DEFAULT_TIMEOUT_SECONDS, DEFAULT_TRACE_PATH
-from repoexec.models import (
-    PolicyDecision,
-    RunRequest,
-    RunResponse,
-    TraceRecord,
-    utc_now,
-)
-from repoexec.policy import evaluate_policy, load_policy
-from repoexec.runner import run_command
+from repoexec.config import DEFAULT_POLICY_PATH, DEFAULT_TRACE_PATH
+from repoexec.models import RunRequest, RunResponse, TraceRecord
+from repoexec.policy import load_policy
+from repoexec.service import RunExecutionError, execute_run_request, replay_run
 from repoexec.store import TraceStore
 
 
@@ -29,96 +22,19 @@ def create_app(
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/runs", response_model=list[TraceRecord])
+    def list_runs(
+        limit: int | None = Query(default=50, ge=1, le=500),
+        decision: str | None = Query(default=None),
+    ) -> list[TraceRecord]:
+        return store.list_runs(limit=limit, decision=decision)
+
     @app.post("/runs", response_model=RunResponse)
     def create_run(request: RunRequest) -> RunResponse:
-        run_id = TraceRecord.new_id()
-        evaluation = evaluate_policy(policy, request.command)
-        decision = evaluation.decision
-        timeout_seconds = request.timeout_seconds or DEFAULT_TIMEOUT_SECONDS
-
-        if decision is PolicyDecision.DENIED:
-            record = TraceRecord(
-                run_id=run_id,
-                timestamp=utc_now(),
-                workspace=request.workspace,
-                command=request.command,
-                decision=decision,
-                policy_reason=evaluation.reason,
-                matched_rule=evaluation.matched_rule,
-                rule_category=evaluation.rule_category,
-                metadata=request.metadata,
-            )
-            store.append(record)
-            return RunResponse(
-                run_id=run_id,
-                decision=decision,
-                message="Command denied by policy.",
-                policy_reason=evaluation.reason,
-                matched_rule=evaluation.matched_rule,
-                rule_category=evaluation.rule_category,
-            )
-
-        if decision is PolicyDecision.APPROVAL_REQUIRED:
-            record = TraceRecord(
-                run_id=run_id,
-                timestamp=utc_now(),
-                workspace=request.workspace,
-                command=request.command,
-                decision=decision,
-                policy_reason=evaluation.reason,
-                matched_rule=evaluation.matched_rule,
-                rule_category=evaluation.rule_category,
-                metadata=request.metadata,
-            )
-            store.append(record)
-            return RunResponse(
-                run_id=run_id,
-                decision=decision,
-                message="Command requires approval before execution.",
-                policy_reason=evaluation.reason,
-                matched_rule=evaluation.matched_rule,
-                rule_category=evaluation.rule_category,
-            )
-
         try:
-            result = run_command(
-                request.workspace,
-                request.command,
-                timeout_seconds=timeout_seconds,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise HTTPException(status_code=408, detail="Command timed out.") from exc
-
-        record = TraceRecord(
-            run_id=run_id,
-            timestamp=utc_now(),
-            workspace=request.workspace,
-            command=request.command,
-            decision=decision,
-            policy_reason=evaluation.reason,
-            matched_rule=evaluation.matched_rule,
-            rule_category=evaluation.rule_category,
-            exit_code=result.exit_code,
-            duration_ms=result.duration_ms,
-            stdout=result.stdout,
-            stderr=result.stderr,
-            metadata=request.metadata,
-        )
-        store.append(record)
-        return RunResponse(
-            run_id=run_id,
-            decision=decision,
-            message="Command executed.",
-            policy_reason=evaluation.reason,
-            matched_rule=evaluation.matched_rule,
-            rule_category=evaluation.rule_category,
-            exit_code=result.exit_code,
-            duration_ms=result.duration_ms,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+            return execute_run_request(policy, store, request)
+        except RunExecutionError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     @app.get("/runs/{run_id}", response_model=TraceRecord)
     def get_run(run_id: str) -> TraceRecord:
@@ -126,5 +42,15 @@ def create_app(
         if record is None:
             raise HTTPException(status_code=404, detail="Run not found.")
         return record
+
+    @app.post("/runs/{run_id}/replay", response_model=RunResponse)
+    def replay_run_endpoint(
+        run_id: str,
+        timeout_seconds: int | None = Query(default=None, ge=1),
+    ) -> RunResponse:
+        try:
+            return replay_run(policy, store, run_id, timeout_seconds=timeout_seconds)
+        except RunExecutionError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     return app
