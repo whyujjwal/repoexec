@@ -211,3 +211,16 @@ def test_denied_command_outside_root_returns_400(rooted_client):
     )
     assert response.status_code == 400
     assert "outside allowed root" in response.json()["detail"]
+
+
+def test_compound_command_bypass_is_denied(client: TestClient):
+    response = client.post(
+        "/runs",
+        json={"workspace": ".", "command": "echo hello; rm -rf /tmp/x"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision"] == "denied"
+    assert body["matched_rule"] == "rm *"
+    assert body["exit_code"] is None
+    assert "Compound command blocked" in body["policy_reason"]
