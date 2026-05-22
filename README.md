@@ -101,6 +101,38 @@ When a command is denied or requires approval, responses include:
 - `matched_rule` — the pattern that matched
 - `rule_category` — `deny`, `require_approval`, `allow`, or `default`
 
+## Approval tokens
+
+Commands that match `require_approval` are blocked until a human issues a local HMAC token that binds to the exact `workspace` and `command`. No external services are involved.
+
+**Configure a secret** (pick one):
+
+- Environment variable: `REPOEXEC_APPROVAL_SECRET`
+- Local file: `.repoexec/approval.secret` (created with `--create-secret`)
+
+**Issue a token:**
+
+```bash
+repoexec approve \
+  --workspace . \
+  --command 'git push origin main' \
+  --create-secret
+```
+
+**Run with the token:**
+
+```bash
+repoexec run \
+  --workspace . \
+  --command 'git push origin main' \
+  --policy examples/policy.json \
+  --approval-token '<token-from-approve>'
+```
+
+Via the API, include `approval_token` in the `POST /runs` body. The server loads the secret from `REPOEXEC_APPROVAL_SECRET` or `--approval-secret` at startup. Tokens expire after one hour by default (`--ttl-seconds` on `approve`).
+
+Approved runs are recorded with `metadata.approved_via_token: true` in the trace log.
+
 ## Workspace root constraints
 
 By default, RepoExec only checks that the workspace path exists and is a directory. For production deployments, pass `--workspace-root` to the server or CLI so every workspace must resolve inside a trusted directory:
@@ -143,6 +175,7 @@ curl -s -X POST http://127.0.0.1:8765/runs \
     "workspace": ".",
     "command": "pytest -q",
     "timeout_seconds": 120,
+    "approval_token": null,
     "metadata": {"agent": "cursor", "issue": "42"}
   }'
 ```
@@ -207,13 +240,16 @@ Traces are the source of truth. The in-memory index reloads from disk on startup
 
 ```bash
 # Start API server
-repoexec serve [--host 127.0.0.1] [--port 8765] [--policy examples/policy.json] [--trace .repoexec/traces.jsonl] [--workspace-root .]
+repoexec serve [--host 127.0.0.1] [--port 8765] [--policy examples/policy.json] [--trace .repoexec/traces.jsonl] [--workspace-root .] [--approval-secret .repoexec/approval.secret]
 
 # Run a single command
-repoexec run --workspace . --command 'echo hello' --policy examples/policy.json [--timeout 300] [--workspace-root .]
+repoexec run --workspace . --command 'echo hello' --policy examples/policy.json [--timeout 300] [--workspace-root .] [--approval-token <token>]
 
 # Replay a stored run
-repoexec replay --run-id <uuid> --policy examples/policy.json
+repoexec replay --run-id <uuid> --policy examples/policy.json [--approval-token <token>]
+
+# Issue an approval token for a require_approval command
+repoexec approve --workspace . --command 'git push origin main' [--create-secret]
 
 # Inspect traces
 repoexec traces list [--limit 20] [--decision denied]
@@ -246,6 +282,7 @@ See `examples/github-agent-workflow.sh` for a minimal end-to-end demo.
 ```
 repoexec/
   api.py        FastAPI routes
+  approval.py   Local HMAC approval tokens
   cli.py        Typer CLI
   config.py     Defaults
   models.py     Request/response/trace models
