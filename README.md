@@ -62,8 +62,10 @@ python3 -m repoexec.cli run \
 Start the HTTP server:
 
 ```bash
-python3 -m repoexec.cli serve --policy examples/policy.json
+python3 -m repoexec.cli serve --policy examples/policy.json --workspace-root .
 ```
+
+The optional `--workspace-root` flag rejects run requests whose workspace resolves outside the given directory. Use it in production to block path-escape attempts.
 
 Try the GitHub agent workflow demo:
 
@@ -98,6 +100,17 @@ When a command is denied or requires approval, responses include:
 - `policy_reason` — human-readable explanation
 - `matched_rule` — the pattern that matched
 - `rule_category` — `deny`, `require_approval`, `allow`, or `default`
+
+## Workspace root constraints
+
+By default, RepoExec only checks that the workspace path exists and is a directory. For production deployments, pass `--workspace-root` to the server or CLI so every workspace must resolve inside a trusted directory:
+
+```bash
+repoexec serve --policy examples/policy.json --workspace-root /path/to/repo
+repoexec run --workspace . --command 'pytest -q' --policy examples/policy.json --workspace-root .
+```
+
+Requests with workspaces outside the root return HTTP 400 (API) or exit code 1 (CLI) before policy evaluation or execution. Relative paths and `..` segments are resolved before the check.
 
 ## HTTP API
 
@@ -194,10 +207,10 @@ Traces are the source of truth. The in-memory index reloads from disk on startup
 
 ```bash
 # Start API server
-repoexec serve [--host 127.0.0.1] [--port 8765] [--policy examples/policy.json] [--trace .repoexec/traces.jsonl]
+repoexec serve [--host 127.0.0.1] [--port 8765] [--policy examples/policy.json] [--trace .repoexec/traces.jsonl] [--workspace-root .]
 
 # Run a single command
-repoexec run --workspace . --command 'echo hello' --policy examples/policy.json [--timeout 300]
+repoexec run --workspace . --command 'echo hello' --policy examples/policy.json [--timeout 300] [--workspace-root .]
 
 # Replay a stored run
 repoexec replay --run-id <uuid> --policy examples/policy.json
